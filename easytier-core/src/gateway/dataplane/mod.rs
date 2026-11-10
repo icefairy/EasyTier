@@ -70,6 +70,7 @@ mod tcp;
 mod tests;
 mod udp;
 mod udp_fragments;
+mod via;
 
 use udp_fragments::UdpFragments;
 
@@ -84,10 +85,12 @@ use self::{
         DataPlaneTransportPreference,
     },
     stack::SmoltcpPlane,
+    via::ViaRoutes,
 };
 
 pub(crate) use self::resource::DataPlaneConsumerLease;
 use self::tcp::DataPlaneTcpStreamRoute;
+pub(crate) use self::via::ViaKey;
 pub use self::{
     error::{DataPlaneError, DataPlaneErrorKind},
     operation::{
@@ -107,6 +110,9 @@ pub(crate) struct DataPlaneTcpConnectOptions {
     purpose: TcpSocketPurpose,
     source_hint: Option<SocketAddr>,
     deadline: DataPlaneDeadline,
+    /// When set, the flow must be relayed by this overlay peer, which acts as
+    /// an exit node for that connection only.
+    via: Option<IpAddr>,
 }
 
 impl DataPlaneTcpConnectOptions {
@@ -125,6 +131,7 @@ impl DataPlaneTcpConnectOptions {
             purpose: TcpSocketPurpose::DataPlane,
             source_hint: None,
             deadline,
+            via: None,
         }
     }
 
@@ -139,7 +146,15 @@ impl DataPlaneTcpConnectOptions {
             purpose,
             source_hint: Some(source_hint),
             deadline: DataPlaneDeadline::from_timeout(timeout),
+            via: None,
         }
+    }
+
+    /// Routes this connection through `via`, a peer that relays it to its own
+    /// network. The regular overlay route for the destination is not used.
+    pub(crate) fn with_via(mut self, via: Option<IpAddr>) -> Self {
+        self.via = via.filter(|ip| !ip.is_unspecified());
+        self
     }
 }
 
@@ -210,6 +225,7 @@ where
     net: Arc<Mutex<Option<SmoltcpPlane>>>,
     pub(super) entries: FlowSet,
     udp_fragments: Arc<std::sync::Mutex<UdpFragments>>,
+    pub(super) via_routes: Arc<ViaRoutes>,
 
     data_plane_consumers: Arc<DataPlaneConsumers>,
     // Tracks whether the smoltcp `net` is ready for data-plane callers.
@@ -361,6 +377,7 @@ where
             net: Arc::new(Mutex::new(None)),
             entries: Arc::new(FlowTable::default()),
             udp_fragments: Arc::new(std::sync::Mutex::new(UdpFragments::default())),
+            via_routes: Arc::new(ViaRoutes::default()),
 
             data_plane_consumers: Arc::new(DataPlaneConsumers::new()),
             data_plane_net_ready: tokio::sync::watch::channel(false).0,
@@ -395,6 +412,7 @@ where
         let packet_recv = self.packet_recv.clone();
         let entries = self.entries.clone();
         let udp_fragments = self.udp_fragments.clone();
+        let via_routes = self.via_routes.clone();
         let data_plane_consumers = self.data_plane_consumers.clone();
         let data_plane_net_ready = self.data_plane_net_ready.clone();
         self.runtime_tasks.lock().unwrap().spawn(async move {
@@ -477,6 +495,7 @@ where
                             cur_ipv4,
                             peer_manager.clone(),
                             packet_recv.clone(),
+                            via_routes.clone(),
                         ));
                         tracing::trace!(
                             ?cur_ipv4,
@@ -601,7 +620,30 @@ where
                 "peer manager is no longer available",
             )
         })?;
-        let overlay_destination = if local_virtual_destination {
+        if let Some(via) = options.via {
+            let IpAddr::V4(via_ipv4) = via else {
+                return Err(DataPlaneError::new(
+                    DataPlaneErrorKind::AddressFamilyUnsupported,
+                    "port-forward relay (via) must be an IPv4 address",
+                ));
+            };
+            if peer_manager
+                .get_peer_map()
+                .get_peer_id_by_ipv4(&via_ipv4)
+                .await
+                .is_none()
+            {
+                return Err(DataPlaneError::new(
+                    DataPlaneErrorKind::NoOverlayRoute,
+                    format!("port-forward relay peer {via} is not reachable in the overlay"),
+                ));
+            }
+        }
+
+        // A relayed flow is delivered through the smoltcp stack no matter
+        // whether the destination itself has an overlay route: the relay peer
+        // takes care of the last hop.
+        let overlay_destination = if local_virtual_destination || options.via.is_some() {
             true
         } else {
             let (peers, _) = options
@@ -613,7 +655,11 @@ where
             !peers.is_empty()
         };
 
-        let prefer_kcp = options.transport == DataPlaneTransportPreference::PreferKcp;
+        // A relayed flow must stay on the smoltcp path: the KCP/QUIC source
+        // transports address the destination peer directly and cannot express
+        // "hand this to an exit node for its own network".
+        let prefer_kcp =
+            options.transport == DataPlaneTransportPreference::PreferKcp && options.via.is_none();
         let transport_proxy = self.transport_proxy.as_ref().and_then(Weak::upgrade);
         let kcp_ready = if prefer_kcp && overlay_destination {
             match &transport_proxy {
@@ -836,6 +882,12 @@ where
             ));
         }
         Ok(lease)
+    }
+
+    /// Installs the destination -> relay-peer table used by the smoltcp bridge
+    /// for per-rule port-forward relays.
+    pub(crate) fn replace_via_routes(&self, routes: impl IntoIterator<Item = (ViaKey, IpAddr)>) {
+        self.via_routes.replace(routes);
     }
 
     pub(crate) fn acquire_consumer_lease(&self) -> DataPlaneResult<DataPlaneConsumerLease> {

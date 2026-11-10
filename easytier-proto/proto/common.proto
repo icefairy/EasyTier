@@ -270,6 +270,11 @@ message PortForwardConfigPb {
   SocketAddr bind_addr = 1;
   SocketAddr dst_addr = 2;
   SocketType socket_type = 3;
+  // optional overlay peer (usually the virtual IP of another EasyTier node) that
+  // must relay this forward to its own network, acting as an exit node for
+  // these flows only. when set, dst_addr does not need to be routable inside
+  // the overlay.
+  optional IpAddr via = 4;
 }
 
 message ProxyDstInfo { SocketAddr dst_addr = 1; }

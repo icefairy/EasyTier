@@ -352,6 +352,7 @@ function makeConfig(): NetworkConfig {
       bind_port: 18080,
       dst_ip: '10.0.0.2',
       dst_port: 8080,
+      via_ip: '',
     }],
   }
 }
@@ -502,6 +503,7 @@ describe('Config.vue network config projection', () => {
         bind_port: 19090,
         dst_ip: '10.9.0.2',
         dst_port: 9090,
+        via_ip: '',
       }],
     })
 
@@ -530,6 +532,7 @@ describe('Config.vue network config projection', () => {
         bind_port: 19090,
         dst_ip: '10.9.0.2',
         dst_port: 9090,
+        via_ip: '',
       }],
     })
 

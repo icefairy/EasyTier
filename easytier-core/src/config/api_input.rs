@@ -361,11 +361,28 @@ impl NetworkConfigExt for NetworkConfig {
                         let dst_addr =
                             format!("{}:{}", pf.dst_ip, pf.dst_port).parse::<SocketAddr>();
 
+                        let via = match pf.via_ip.trim() {
+                            "" => None,
+                            via => match via.parse::<std::net::IpAddr>() {
+                                Ok(via) => Some(via),
+                                Err(_) => {
+                                    tracing::warn!(
+                                        via,
+                                        bind_addr = %pf.bind_ip,
+                                        dst_addr = %pf.dst_ip,
+                                        "dropping invalid port-forward relay (via) address"
+                                    );
+                                    None
+                                }
+                            },
+                        };
+
                         match (bind_addr, dst_addr) {
                             (Ok(bind_addr), Ok(dst_addr)) => Some(PortForwardConfig {
                                 bind_addr,
                                 dst_addr,
                                 proto: pf.proto.clone(),
+                                via,
                             }),
                             _ => None,
                         }
@@ -634,6 +651,7 @@ impl NetworkConfigExt for NetworkConfig {
                     bind_port: f.bind_addr.port() as u32,
                     dst_ip: f.dst_addr.ip().to_string(),
                     dst_port: f.dst_addr.port() as u32,
+                    via_ip: f.via.map(|ip| ip.to_string()).unwrap_or_default(),
                 })
                 .collect();
         }

@@ -171,6 +171,7 @@ easytier-core/src/gateway/
     session.rs
     operation.rs
     resource.rs
+    via.rs
   socks5/
     adapter.rs
     codec.rs
@@ -192,6 +193,9 @@ follow these Modules rather than the current physical layout.
 - TCP flow and listener registration;
 - UDP flow registration;
 - peer-packet classification and delivery;
+- per-destination relay ("via") routes, so a port-forward rule can pin its
+  flows to an exit node that forwards them into its own network instead of
+  relying on an overlay route for the destination;
 - local data-plane endpoint registration;
 - stack, pipeline, and task shutdown;
 - data-plane route and I/O errors.

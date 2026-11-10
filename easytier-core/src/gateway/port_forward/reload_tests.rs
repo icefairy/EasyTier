@@ -156,6 +156,7 @@ impl UdpReloadTest {
             proto: "udp".to_owned(),
             bind_addr: "127.0.0.1:19491".parse().unwrap(),
             dst_addr: SocketAddr::from(([10, 144, 0, 2], port)),
+            via: None,
         };
         self.adapter
             .prepare(std::slice::from_ref(&config))

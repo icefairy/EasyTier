@@ -376,6 +376,9 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.exit_nodes ??= []
   normalized.mapped_listeners ??= []
   normalized.port_forwards ??= []
+  normalized.port_forwards.forEach((forward) => {
+    forward.via_ip ??= ''
+  })
   if (normalized.vpn_portal_config) {
     normalized.vpn_portal_config.clients ??= []
     normalized.vpn_portal_config.clients.forEach((client) => {
@@ -568,6 +571,7 @@ export const addRow = (rows: PortForwardConfig[]) => {
     bind_port: 65535,
     dst_ip: '',
     dst_port: 65535,
+    via_ip: '',
   });
 };
 

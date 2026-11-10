@@ -455,6 +455,7 @@ mod tests {
                 bind_port: 18080,
                 dst_ip: "10.88.0.2".to_owned(),
                 dst_port: 80,
+                via_ip: String::new(),
             }],
             enable_vpn_portal: Some(true),
             data_compress_algo: Some(CompressionAlgoPb::Zstd as i32),

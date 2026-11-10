@@ -614,6 +614,9 @@ function removeVpnPortalClient(index: number) {
                             mode="decimal" :min="1" :max="65535" fluid class="max-w-20" />
                         </InputGroup>
                       </div>
+                      <div style="flex-grow: 3;">
+                        <InputText v-model="row.via_ip" :placeholder="t('port_forwards_via_addr')" fluid />
+                      </div>
                       <div style="flex-grow: 1;">
                         <Button v-if="curNetwork.port_forwards.length > 0" icon="pi pi-trash" severity="danger" text
                           rounded @click="removeRow(index, curNetwork.port_forwards)" />
@@ -621,8 +624,10 @@ function removeVpnPortalClient(index: number) {
                     </div>
                     <!-- Small screen view -->
                     <div v-else class="flex justify-between items-center p-2 border-b">
-                      <span>{{ row.proto }}://{{ row.bind_ip }}:{{ row.bind_port }}/{{ row.dst_ip }}:{{
-                        row.dst_port }}</span>
+                      <span>
+                        {{ row.proto }}://{{ row.bind_ip }}:{{ row.bind_port }}/{{ row.dst_ip }}:{{ row.dst_port }}
+                        <template v-if="row.via_ip"> (via {{ row.via_ip }})</template>
+                      </span>
                       <div class="flex gap-2">
                         <Button icon="pi pi-pencil" class="p-button-sm" @click="openPortForwardEditor(index)" />
                         <Button icon="pi pi-trash" class="p-button-sm p-button-danger"
@@ -658,6 +663,8 @@ function removeVpnPortalClient(index: number) {
                         <InputNumber v-model="editingPortForwardData.dst_port" :format="false" :step="1" mode="decimal"
                           :min="1" :max="65535" class="max-w-20" />
                       </InputGroup>
+                      <InputText v-model="editingPortForwardData.via_ip"
+                        :placeholder="t('port_forwards_via_addr')" />
                     </div>
                     <template #footer>
                       <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="editingPortForward = false"

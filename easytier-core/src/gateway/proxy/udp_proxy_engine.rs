@@ -195,10 +195,6 @@ impl UdpProxyEngine {
         ctx: UdpProxyPeerContext,
         runtime: &impl UdpProxyRuntime,
     ) -> UdpProxyAction {
-        if self.cidr_table.is_empty() && !ctx.enable_exit_node && !ctx.no_tun {
-            return UdpProxyAction::Pass;
-        }
-
         let Some(virtual_ipv4) = ctx.virtual_ipv4 else {
             return UdpProxyAction::Pass;
         };
@@ -206,6 +202,9 @@ impl UdpProxyEngine {
             return UdpProxyAction::Pass;
         };
         let is_exit_node = hdr.is_exit_node();
+        if self.cidr_table.is_empty() && !ctx.enable_exit_node && !ctx.no_tun && !is_exit_node {
+            return UdpProxyAction::Pass;
+        }
         if hdr.packet_type != PacketType::Data as u8 || hdr.is_no_proxy() {
             return UdpProxyAction::Pass;
         };

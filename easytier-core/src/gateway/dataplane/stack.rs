@@ -1,11 +1,11 @@
 //! smoltcp stack generation and its peer-packet bridge.
 
 use std::{
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Weak},
 };
 
-use smoltcp::wire::Ipv4Packet;
+use smoltcp::wire::{IpProtocol, Ipv4Packet, TcpPacket, UdpPacket};
 use tokio::{
     sync::{Mutex, mpsc},
     task::JoinSet,
@@ -14,11 +14,14 @@ use tokio::{
 use crate::{
     foundation::task::reap_joinset_background,
     gateway::smoltcp::{BufferSize, Net, NetConfig, channel_device},
-    packet::ZCPacket,
+    packet::{PacketType, ZCPacket},
     peers::peer_manager::PeerManagerCore,
 };
 
-use super::{DataPlaneErrorKind, DataPlaneIoGuard};
+use super::{
+    DataPlaneErrorKind, DataPlaneIoGuard,
+    via::{ViaKey, ViaRoutes},
+};
 
 pub(super) struct SmoltcpPlane {
     pub(super) ipv4_addr: cidr::Ipv4Inet,
@@ -32,6 +35,7 @@ impl SmoltcpPlane {
         ipv4_addr: cidr::Ipv4Inet,
         peer_manager: Weak<PeerManagerCore>,
         packet_recv: Arc<Mutex<mpsc::Receiver<ZCPacket>>>,
+        via_routes: Arc<ViaRoutes>,
     ) -> Self {
         let mut forward_tasks = JoinSet::new();
         let mut capabilities = smoltcp::phy::DeviceCapabilities::default();
@@ -63,12 +67,47 @@ impl SmoltcpPlane {
                     tracing::debug!("smoltcp-to-peer bridge lost PeerManager");
                     return;
                 };
+                let mut packet = ZCPacket::new_with_payload(&data);
+                // A port-forward rule may pin its flows to a specific relay
+                // peer that forwards them into its own network.
+                let via = via_key(&data).and_then(|key| via_routes.lookup(&key));
+                if let Some(via) = via {
+                    if let Some(peer_id) = peer_manager
+                        .get_peer_map()
+                        .get_peer_id_by_ipv4(&match via {
+                            IpAddr::V4(v4) => v4,
+                            IpAddr::V6(_) => {
+                                tracing::error!(%via, "port-forward relay must be IPv4");
+                                continue;
+                            }
+                        })
+                        .await
+                    {
+                        packet.fill_peer_manager_hdr(
+                            peer_manager.my_peer_id(),
+                            peer_id,
+                            PacketType::Data as u8,
+                        );
+                        // Ask the relay to act as an exit node for this packet
+                        // only: it forwards to the real destination instead of
+                        // requiring an overlay route for it.
+                        packet
+                            .mut_peer_manager_header()
+                            .expect("peer manager header")
+                            .set_exit_node(true);
+                        if let Err(error) = peer_manager.send_msg_for_proxy(packet, peer_id).await {
+                            tracing::error!(?error, %via, "deliver relayed packet to peer failed");
+                        }
+                        continue;
+                    }
+                    tracing::warn!(
+                        %via,
+                        %destination,
+                        "port-forward relay peer is missing, falling back to the overlay route"
+                    );
+                }
                 if let Err(error) = peer_manager
-                    .send_msg_by_ip(
-                        ZCPacket::new_with_payload(&data),
-                        IpAddr::V4(destination),
-                        false,
-                    )
+                    .send_msg_by_ip(packet, IpAddr::V4(destination), false)
                     .await
                 {
                     tracing::error!(?error, "deliver smoltcp packet to peer failed");
@@ -131,6 +170,29 @@ impl SmoltcpPlane {
 
     pub(super) fn close(&self, kind: DataPlaneErrorKind) {
         self.generation.close(kind);
+    }
+}
+
+/// Extracts the flow destination of a packet emitted by the smoltcp stack.
+fn via_key(buf: &[u8]) -> Option<ViaKey> {
+    let ipv4 = Ipv4Packet::new_checked(buf).ok()?;
+    let dst_ip = SocketAddr::new(IpAddr::V4(ipv4.dst_addr()), 0);
+    match ipv4.next_header() {
+        IpProtocol::Tcp => {
+            let tcp = TcpPacket::new_checked(ipv4.payload()).ok()?;
+            Some(ViaKey {
+                dst: SocketAddr::new(dst_ip.ip(), tcp.dst_port()),
+                udp: false,
+            })
+        }
+        IpProtocol::Udp => {
+            let udp = UdpPacket::new_checked(ipv4.payload()).ok()?;
+            Some(ViaKey {
+                dst: SocketAddr::new(dst_ip.ip(), udp.dst_port()),
+                udp: true,
+            })
+        }
+        _ => None,
     }
 }
 

@@ -468,11 +468,13 @@ mod tests {
                         bind_addr: tcp_reservation.local_addr().unwrap(),
                         dst_addr: tcp_echo.local_addr().unwrap(),
                         proto: "tcp".to_owned(),
+                        via: None,
                     },
                     PortForwardConfig {
                         bind_addr: udp_reservation.local_addr().unwrap(),
                         dst_addr: udp_echo.local_addr().unwrap(),
                         proto: "udp".to_owned(),
+                        via: None,
                     },
                 ];
                 let config = isolated_config(multi_thread, 2);

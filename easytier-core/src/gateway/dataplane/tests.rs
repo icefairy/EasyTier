@@ -37,6 +37,7 @@ fn test_gateway() -> Arc<DataPlaneRuntime<TestHost>> {
         net: Arc::new(Mutex::new(None)),
         entries: Arc::new(FlowTable::default()),
         udp_fragments: Arc::new(std::sync::Mutex::new(UdpFragments::default())),
+        via_routes: Arc::new(ViaRoutes::default()),
         data_plane_consumers: Arc::new(DataPlaneConsumers::new()),
         data_plane_net_ready: tokio::sync::watch::channel(false).0,
         pipeline_guard: Mutex::new(None),
@@ -512,6 +513,66 @@ async fn public_tcp_connect_never_falls_back_to_an_unrelated_host() {
 
     endpoint.gateway.stop_runtime().await;
     endpoint.peer_manager.clear_resources().await;
+}
+
+#[tokio::test]
+async fn via_relay_requires_a_reachable_overlay_peer() {
+    let host = Arc::new(TestHost::default());
+    let endpoint = data_plane_endpoint(host, "10.126.131.1/24".parse().unwrap());
+    endpoint.peer_manager.run().await.unwrap();
+    endpoint.gateway.start_runtime().await.unwrap();
+
+    let options = DataPlaneTcpConnectOptions::gateway(
+        Duration::from_secs(1),
+        TcpSocketPurpose::PortForward,
+        "10.126.131.1:40000".parse().unwrap(),
+    )
+    .with_via(Some("10.144.0.20".parse().unwrap()));
+
+    let error = match endpoint
+        .gateway
+        .connect_tcp("192.168.1.50:80".parse().unwrap(), options)
+        .await
+    {
+        Ok(_) => panic!("relayed connect unexpectedly succeeded without a relay peer"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), DataPlaneErrorKind::NoOverlayRoute);
+    assert_eq!(endpoint.gateway.host.tcp_binds.load(Ordering::Relaxed), 0);
+
+    endpoint.gateway.stop_runtime().await;
+    endpoint.peer_manager.clear_resources().await;
+}
+
+#[tokio::test]
+async fn via_routes_replace_and_lookup_flow_destinations() {
+    let host = Arc::new(TestHost::default());
+    let endpoint = data_plane_endpoint(host, "10.126.131.1/24".parse().unwrap());
+
+    endpoint.gateway.replace_via_routes([(
+        ViaKey {
+            dst: "192.168.1.50:80".parse().unwrap(),
+            udp: false,
+        },
+        "10.144.0.20".parse().unwrap(),
+    )]);
+    assert_eq!(
+        endpoint.gateway.via_routes.lookup(&ViaKey {
+            dst: "192.168.1.50:80".parse().unwrap(),
+            udp: false,
+        }),
+        Some("10.144.0.20".parse().unwrap())
+    );
+    assert_eq!(
+        endpoint.gateway.via_routes.lookup(&ViaKey {
+            dst: "192.168.1.50:80".parse().unwrap(),
+            udp: true,
+        }),
+        None
+    );
+
+    endpoint.gateway.replace_via_routes(std::iter::empty());
+    assert!(endpoint.gateway.via_routes.is_empty());
 }
 
 #[tokio::test]

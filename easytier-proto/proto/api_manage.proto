@@ -152,6 +152,9 @@ message PortForwardConfig {
   string dst_ip = 3;
   uint32 dst_port = 4;
   string proto = 5;
+  // optional virtual IP of the peer that relays these flows to its own
+  // network (per-rule exit node). empty = resolve through the overlay route.
+  string via_ip = 6;
 }
 
 message MyNodeInfo {

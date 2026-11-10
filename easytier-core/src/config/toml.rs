@@ -1910,6 +1910,29 @@ source = "user"
         assert!(loaded.get_ipv6_public_addr_auto());
         assert_eq!(loaded.get_ipv6_public_addr_prefix(), Some(prefix));
     }
+
+    #[test]
+    fn port_forward_via_roundtrips_through_toml() {
+        let config = TomlConfigLoader::default();
+        config.set_port_forwards(vec![PortForwardConfig {
+            bind_addr: "0.0.0.0:8080".parse().unwrap(),
+            dst_addr: "192.168.1.50:80".parse().unwrap(),
+            proto: "tcp".to_string(),
+            via: Some("10.144.0.20".parse().unwrap()),
+        }]);
+
+        let dumped = config.dump();
+        let loaded = TomlConfigLoader::new_from_str(&dumped).unwrap();
+        assert_eq!(
+            loaded.get_port_forwards(),
+            vec![PortForwardConfig {
+                bind_addr: "0.0.0.0:8080".parse().unwrap(),
+                dst_addr: "192.168.1.50:80".parse().unwrap(),
+                proto: "tcp".to_string(),
+                via: Some("10.144.0.20".parse().unwrap()),
+            }]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1956,6 +1979,12 @@ level = "warn"
 bind_addr = "0.0.0.0:11011"
 dst_addr = "192.168.94.33:11011"
 proto = "tcp"
+
+[[port_forward]]
+bind_addr = "0.0.0.0:11012"
+dst_addr = "192.168.94.34:11012"
+proto = "udp"
+via = "10.144.144.2"
 "#;
         let ret = TomlConfigLoader::new_from_str(config_str);
         if let Err(e) = &ret {
@@ -1977,11 +2006,20 @@ proto = "tcp"
         );
 
         assert_eq!(
-            vec![PortForwardConfig {
-                bind_addr: "0.0.0.0:11011".parse().unwrap(),
-                dst_addr: "192.168.94.33:11011".parse().unwrap(),
-                proto: "tcp".to_string(),
-            }],
+            vec![
+                PortForwardConfig {
+                    bind_addr: "0.0.0.0:11011".parse().unwrap(),
+                    dst_addr: "192.168.94.33:11011".parse().unwrap(),
+                    proto: "tcp".to_string(),
+                    via: None,
+                },
+                PortForwardConfig {
+                    bind_addr: "0.0.0.0:11012".parse().unwrap(),
+                    dst_addr: "192.168.94.34:11012".parse().unwrap(),
+                    proto: "udp".to_string(),
+                    via: Some("10.144.144.2".parse().unwrap()),
+                },
+            ],
             ret.get_port_forwards()
         );
         println!("{}", ret.dump());

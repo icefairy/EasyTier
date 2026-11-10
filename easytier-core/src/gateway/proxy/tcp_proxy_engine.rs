@@ -249,10 +249,6 @@ impl TcpProxyEngine {
         packet: &mut ZCPacket,
         ctx: TcpProxyPeerContext,
     ) -> TcpProxyPacketAction {
-        if !self.check_packet_from_peer_fast(mode, &ctx) {
-            return TcpProxyPacketAction::Pass;
-        }
-
         let Some(local_inet) = ctx.local_inet else {
             return TcpProxyPacketAction::Pass;
         };
@@ -260,6 +256,13 @@ impl TcpProxyEngine {
         let Some(hdr) = packet.peer_manager_header() else {
             return TcpProxyPacketAction::Pass;
         };
+        // A sending peer may pin a single flow to this node by setting the
+        // exit-node flag on the packet (a per-rule port-forward relay). That
+        // works without this node being a global exit node.
+        let requested_relay = hdr.is_exit_node();
+        if !self.check_packet_from_peer_fast(mode, &ctx) && !requested_relay {
+            return TcpProxyPacketAction::Pass;
+        }
         if hdr.is_no_proxy() {
             return TcpProxyPacketAction::Pass;
         }

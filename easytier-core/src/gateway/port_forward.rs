@@ -29,7 +29,7 @@ use crate::{
     foundation::task::reap_joinset_background,
     gateway::dataplane::{
         DataPlaneConsumerLease, DataPlaneRuntime, DataPlaneTcpConnectOptions, DataPlaneTcpStream,
-        DataPlaneUdpSocket,
+        DataPlaneUdpSocket, ViaKey,
     },
     socket::{
         SocketContext,
@@ -183,6 +183,7 @@ where
             lease.replace(consumer_lease);
         }
         let released_lease = if configs.is_empty() {
+            adapter.data_plane.replace_via_routes(std::iter::empty());
             lease.take()
         } else {
             None
@@ -339,6 +340,20 @@ where
                 );
             }
         }
+
+        // Refresh the per-destination relay table before (re)binding listeners so
+        // connections accepted below already see the new exit-node mapping.
+        let via_routes = cfgs.iter().filter_map(|cfg| {
+            let via = cfg.via?;
+            Some((
+                ViaKey {
+                    dst: cfg.dst_addr,
+                    udp: cfg.proto.eq_ignore_ascii_case("udp"),
+                },
+                via,
+            ))
+        });
+        self.data_plane.replace_via_routes(via_routes);
         let consumer_lease = if !configs.is_empty() && self.consumer_lease.lock().unwrap().is_none()
         {
             Some(self.data_plane.acquire_consumer_lease()?)
@@ -424,6 +439,7 @@ where
         let task_cancel = cancel.clone();
         let task_config = config.clone();
 
+        let via = cfg.via;
         let data_plane = self.data_plane.clone();
         let connections = Arc::new(std::sync::Mutex::new(JoinSet::new()));
         connections.lock().unwrap().spawn(reap_joinset_background(
@@ -458,7 +474,8 @@ where
                         Duration::from_secs(10),
                         TcpSocketPurpose::PortForward,
                         source_addr,
-                    );
+                    )
+                    .with_via(via);
                     let outgoing = match data_plane.connect_tcp(dst_addr, options).await {
                         Ok(stream) => stream,
                         Err(error) => {
@@ -945,6 +962,7 @@ mod tests {
                 bind_addr: "127.0.0.1:5202".parse().unwrap(),
                 dst_addr: "10.144.0.20:5201".parse().unwrap(),
                 proto: "udp".to_owned(),
+                via: None,
             },
         }
     }

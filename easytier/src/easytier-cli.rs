@@ -369,6 +369,11 @@ enum PortForwardSubCommand {
         bind_addr: String,
         #[arg(help = "Destination address (e.g., 10.1.1.1:80)")]
         dst_addr: String,
+        #[arg(
+            long,
+            help = "Virtual IP of an exit node that relays these flows into its own network (per-rule relay). The destination then does not need an overlay route; the relay node must run with --enable-exit-node (or --no-tun)."
+        )]
+        via: Option<String>,
     },
     /// Remove port forward rule
     Remove {
@@ -378,6 +383,8 @@ enum PortForwardSubCommand {
         bind_addr: String,
         #[arg(help = "Optional Destination address (e.g., 10.1.1.1:80)")]
         dst_addr: Option<String>,
+        #[arg(long, help = "Relay peer virtual IP of the rule to remove")]
+        via: Option<String>,
     },
     /// List port forward rules
     List,
@@ -2661,10 +2668,19 @@ impl<'a> CommandHandler<'a> {
         protocol: &str,
         bind_addr: &str,
         dst_addr: Option<&str>,
+        via: Option<&str>,
     ) -> Result<(), Error> {
         let bind_addr: std::net::SocketAddr = bind_addr
             .parse()
             .with_context(|| format!("Invalid bind address: {}", bind_addr))?;
+        let via = match via.map(str::trim).filter(|via| !via.is_empty()) {
+            Some(via) => Some(
+                via.parse::<std::net::IpAddr>()
+                    .with_context(|| format!("Invalid relay (via) address: {}", via))?
+                    .into(),
+            ),
+            None => None,
+        };
 
         let socket_type = match protocol {
             "tcp" => SocketType::Tcp,
@@ -2682,6 +2698,7 @@ impl<'a> CommandHandler<'a> {
                         bind_addr: Some(bind_addr.into()),
                         dst_addr: dst_addr.map(|s| s.parse::<SocketAddr>().unwrap().into()),
                         socket_type: socket_type.into(),
+                        via,
                     }),
                 }],
                 ..Default::default()
@@ -2706,17 +2723,26 @@ impl<'a> CommandHandler<'a> {
         protocol: &str,
         bind_addr: &str,
         dst_addr: Option<&str>,
+        via: Option<&str>,
     ) -> Result<(), Error> {
         let protocol = protocol.to_string();
         let bind_addr = bind_addr.to_string();
         let dst_addr = dst_addr.map(str::to_string);
+        let via = via.map(str::to_string);
         self.apply_to_instances(|handler| {
             let protocol = protocol.clone();
             let bind_addr = bind_addr.clone();
             let dst_addr = dst_addr.clone();
+            let via = via.clone();
             Box::pin(async move {
                 handler
-                    .apply_port_forward_modify(action, &protocol, &bind_addr, dst_addr.as_deref())
+                    .apply_port_forward_modify(
+                        action,
+                        &protocol,
+                        &bind_addr,
+                        dst_addr.as_deref(),
+                        via.as_deref(),
+                    )
                     .await
             })
         })
@@ -2736,6 +2762,7 @@ impl<'a> CommandHandler<'a> {
             protocol: String,
             bind_addr: String,
             dst_addr: String,
+            via: String,
         }
 
         self.print_results(&results, |response| {
@@ -2756,6 +2783,7 @@ impl<'a> CommandHandler<'a> {
                         .dst_addr
                         .map(|addr| addr.to_string())
                         .unwrap_or_default(),
+                    via: rule.via.map(|via| via.to_string()).unwrap_or_default(),
                 })
                 .collect();
 
@@ -3974,6 +4002,7 @@ async fn main() -> Result<(), Error> {
                 protocol,
                 bind_addr,
                 dst_addr,
+                via,
             }) => {
                 handler
                     .handle_port_forward_modify(
@@ -3981,6 +4010,7 @@ async fn main() -> Result<(), Error> {
                         protocol,
                         bind_addr,
                         Some(dst_addr),
+                        via.as_deref(),
                     )
                     .await?;
             }
@@ -3988,6 +4018,7 @@ async fn main() -> Result<(), Error> {
                 protocol,
                 bind_addr,
                 dst_addr,
+                via,
             }) => {
                 handler
                     .handle_port_forward_modify(
@@ -3995,6 +4026,7 @@ async fn main() -> Result<(), Error> {
                         protocol,
                         bind_addr,
                         dst_addr.as_deref(),
+                        via.as_deref(),
                     )
                     .await?;
             }

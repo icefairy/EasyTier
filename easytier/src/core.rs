@@ -900,10 +900,16 @@ impl NetworkOptions {
                     panic!("failed to parse remote destination addr {}", example_str)
                 });
 
+            let via = port_forward
+                .query_pairs()
+                .find(|(key, _)| key == "via")
+                .and_then(|(_, value)| value.parse::<std::net::IpAddr>().ok());
+
             let port_forward_item = PortForwardConfig {
                 bind_addr,
                 dst_addr,
                 proto: port_forward.scheme().to_string(),
+                via,
             };
 
             let mut old = cfg.get_port_forwards();
